@@ -14,8 +14,8 @@ st.set_page_config(
 # 1. 連線設定 (建議部署時設定在 Streamlit Secrets)
 # ==========================================
 # 如果在本地測試，可以直接填入字串；若部署到雲端，請使用 st.secrets
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "https://fxhyabxgrknlpzjgjfxj.supabase.co")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "sb_secret_y3c5O2zE1u8L6I8hiVDhkg_nsDC5dmm")
+SUPABASE_URL = st.secrets.get("SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
 
 @st.cache_resource
 def init_supabase():
@@ -34,7 +34,7 @@ def check_password():
   """簡單的密碼驗證函式"""
   def password_entered():
     # 預設密碼設為 "company123"，你可以自行更改或改從 st.secrets 讀取
-    if st.session_state["password"] == st.secrets.get("APP_PASSWORD", "company123"):
+    if st.session_state["password"] == st.secrets.get("APP_PASSWORD"):
       st.session_state["password_correct"] = True
       del st.session_state["password"]  # 不要在記憶體留下密碼
     else:
