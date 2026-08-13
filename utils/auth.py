@@ -3,7 +3,7 @@ import streamlit as st
 def check_password():
     """簡單的密碼驗證函式"""
     def password_entered():
-        if st.session_state["password"] == st.secrets.get("APP_PASSWORD", "company123"):
+        if st.session_state["password"] == st.secrets.get("APP_PASSWORD"):
             st.session_state["password_correct"] = True
             del st.session_state["password"]
         else:
