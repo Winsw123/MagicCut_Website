@@ -1,4 +1,3 @@
-import os
 import pandas as pd
 import streamlit as st
 from supabase import create_client
@@ -7,13 +6,12 @@ from supabase import create_client
 # 0. 頁面基本設定
 # ==========================================
 st.set_page_config(
-    page_title="公司內部用戶資料管理系統", page_icon="👥", layout="wide"
+    page_title="公司內部用戶資料管理系統", page_icon="👥", layout="centered"
 )
 
 # ==========================================
-# 1. 連線設定 (建議部署時設定在 Streamlit Secrets)
+# 1. 連線設定
 # ==========================================
-# 如果在本地測試，可以直接填入字串；若部署到雲端，請使用 st.secrets
 SUPABASE_URL = st.secrets.get("SUPABASE_URL")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY")
 
@@ -28,15 +26,13 @@ except Exception as e:
   st.stop()
 
 # ==========================================
-# 2. 簡易登入驗證（保護個資不外洩）
+# 2. 簡易登入驗證
 # ==========================================
 def check_password():
-  """簡單的密碼驗證函式"""
   def password_entered():
-    # 預設密碼設為 "company123"，你可以自行更改或改從 st.secrets 讀取
-    if st.session_state["password"] == st.secrets.get("APP_PASSWORD"):
+    if st.session_state["password"] == st.secrets.get("APP_PASSWORD", "company123"):
       st.session_state["password_correct"] = True
-      del st.session_state["password"]  # 不要在記憶體留下密碼
+      del st.session_state["password"]
     else:
       st.session_state["password_correct"] = False
 
@@ -62,6 +58,7 @@ if not check_password():
 # ==========================================
 # 3. 資料讀取函式
 # ==========================================
+@st.cache_data(ttl=10) # 短暫快取讓手機瀏覽更流暢
 def load_data():
   try:
     response = supabase.table("users").select("*").execute()
@@ -75,66 +72,133 @@ def load_data():
     return pd.DataFrame()
 
 # ==========================================
-# 4. 主介面邏輯
+# 4. 主介面邏輯 (手機優化：列表與詳情頁切換)
 # ==========================================
-st.title("👥 公司內部用戶資料管理系統")
-st.markdown("透過此系統，內部同仁可以快速查詢、篩選與更新用戶資料。")
 
-# 重新載入按鈕
-if st.button("🔄 重新載入最新資料"):
-  st.rerun()
+# 用 Session State 來追蹤目前點選的用戶 ID，若為 None 則顯示列表
+if "selected_user_id" not in st.session_state:
+  st.session_state["selected_user_id"] = None
 
 df = load_data()
 
 if df.empty:
-  st.warning("目前資料庫中沒有用戶資料，或者尚未建立 `users` 資料表。")
+  st.warning("目前資料庫中沒有用戶資料。")
+  if st.button("🔄 重新載入"):
+    st.rerun()
+
 else:
-  # 確保 ID 欄位存在且適合做為索引
-  if "id" in df.columns:
-    df = df.sort_values(by="id")
+  # 確保有必要的欄位（假設資料表至少有 id, name）
+  if "id" not in df.columns or "name" not in df.columns:
+    st.error("資料表格式錯誤：必須包含 'id' 與 'name' 欄位。")
+    st.stop()
 
-  # --- 搜尋與篩選區 ---
-  st.subheader("🔍 搜尋與篩選")
-  search_col1, search_col2 = st.columns(2)
-  
-  with search_col1:
-    search_keyword = st.text_input("輸入關鍵字搜尋（姓名、電話、信箱等）")
-
-  # 篩選邏輯
-  filtered_df = df.copy()
-  if search_keyword:
-    # 將所有欄位轉成字串進行模糊搜尋
-    mask = filtered_df.astype(str).apply(lambda x: x.str.contains(search_keyword, case=False, na=False)).any(axis=1)
-    filtered_df = filtered_df[mask]
-
-  st.info(f"符合條件的用戶共 {len(filtered_df)} 筆")
-
-  # --- 表格檢視與編輯區 ---
-  st.subheader("📝 用戶資料列表（可在表格內直接點擊修改）")
-  
-  # 使用 data_editor 讓使用者直接在介面修改表格
-  edited_df = st.data_editor(
-      filtered_df,
-      num_rows="dynamic",  # 允許新增或刪除列
-      use_container_width=True,
-      key="user_editor"
-  )
-
-  # --- 儲存變更按鈕 ---
-  if st.button("💾 儲存所有變更至資料庫", type="primary"):
-    with st.spinner("正在同步至 Supabase 資料庫..."):
-      try:
-        # 將修改後的 DataFrame 轉換回字典格式
-        updated_records = edited_df.to_dict(orient="records")
-        
-        # 逐筆 upsert（更新或新增）到 Supabase 的 users 資料表
-        # 假設資料表的主鍵是 'id'
-        for row in updated_records:
-          # 移除 Pandas 可能帶入的 NaN 或空值問題
-          clean_row = {k: (None if pd.isna(v) else v) for k, v in row.items()}
-          supabase.table("users").upsert(clean_row).execute()
-          
-        st.success("✅ 資料已成功同步並儲存至雲端資料庫！")
+  # ------------------------------------------
+  # 狀態 A：詳細資料 / 編輯頁面
+  # ------------------------------------------
+  if st.session_state["selected_user_id"] is not None:
+    user_id = st.session_state["selected_user_id"]
+    
+    # 找出該用戶的資料
+    user_row = df[df["id"] == user_id]
+    
+    if user_row.empty:
+      st.warning("找不到該用戶資料。")
+      if st.button("⬅️ 返回列表"):
+        st.session_state["selected_user_id"] = None
         st.rerun()
-      except Exception as e:
-        st.error(f"❌ 儲存失敗：{e}")
+    else:
+      user_data = user_row.iloc[0].to_dict()
+      
+      # 返回按鈕
+      if st.button("⬅️ 返回用戶列表", type="secondary"):
+        st.session_state["selected_user_id"] = None
+        st.rerun()
+        
+      st.markdown(f"### 📋 用戶詳細資料：{user_data.get('name', '未命名')}室")
+      st.markdown("---")
+      
+      # 使用表單讓手機使用者可以逐項編輯
+      with st.form("edit_user_form"):
+        updated_values = {}
+        
+        # 依序為每個欄位建立輸入框（排除 id 不可修改）
+        for col in df.columns:
+          if col == "id":
+            st.text_input("用戶 ID", value=str(user_data[col]), disabled=True)
+            continue
+            
+          val = user_data[col]
+          # 簡單判斷型別給予對應的輸入元件
+          if pd.isna(val):
+            val_str = ""
+          else:
+            val_str = str(val)
+            
+          updated_values[col] = st.text_input(f"{col}", value=val_str)
+          
+        # 儲存按鈕
+        submitted = st.form_submit_button("💾 儲存此用戶變更", type="primary")
+        
+        if submitted:
+          try:
+            # 組合回原本的型別並加上 id
+            payload = {"id": user_id}
+            for k, v in updated_values.items():
+              payload[k] = None if v == "" else v
+              
+            # 寫回 Supabase
+            supabase.table("users").upsert(payload).execute()
+            st.success("✅ 用戶資料更新成功！")
+            
+            # 清除快取並重新載入
+            st.cache_data.clear()
+            st.session_state["selected_user_id"] = None
+            st.rerun()
+          except Exception as e:
+            st.error(f"❌ 更新失敗：{e}")
+
+  # ------------------------------------------
+  # 狀態 B：手機版友善的用戶列表頁面
+  # ------------------------------------------
+  else:
+    st.title("👥 用戶資料管理")
+    
+    # 頂部操作列
+    col_search, col_refresh = st.columns([4, 1])
+    with col_search:
+      search_keyword = st.text_input("🔍 搜尋姓名或電話", placeholder="輸入關鍵字...")
+    with col_refresh:
+      st.write("") # 對齊排版
+      if st.button("🔄"):
+        st.cache_data.clear()
+        st.rerun()
+
+    # 篩選邏輯
+    filtered_df = df.copy()
+    if search_keyword:
+      mask = filtered_df.astype(str).apply(lambda x: x.str.contains(search_keyword, case=False, na=False)).any(axis=1)
+      filtered_df = filtered_df[mask]
+
+    st.markdown(f"<p style='color: gray; font-size: 14px;'>共找到 {len(filtered_df)} 位用戶（點擊名字進入詳細資料）</p>", unsafe_allow_html=True)
+
+    # 渲染卡片式清單（非常適合手機點擊）
+    for index, row in filtered_df.iterrows():
+      uid = row["id"]
+      name = row.get("name", "未命名")
+      # 可以抓取另一個常用欄位輔助顯示，例如電話或信箱
+      sub_info = row.get("phone", row.get("email", ""))
+      
+      # 每一行使用一個簡潔的容器與按鈕
+      with st.container():
+        col1, col2 = st.columns([3, 1])
+        with col1:
+          st.markdown(f"**👤 {name}**")
+          if sub_info:
+            st.markdown(f"<span style='color: gray; font-size: 12px;'>{sub_info}</span>", unsafe_allow_html=True)
+        with col2:
+          # 點擊後將選定的 id 存入 session_state 並重新整理畫面進入詳細頁
+          if st.button("查看/編輯", key=f"btn_{uid}"):
+            st.session_state["selected_user_id"] = uid
+            st.rerun()
+            
+        st.markdown("---")
