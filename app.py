@@ -122,38 +122,63 @@ else:
     else:
         st.title("👥 用戶資料管理")
         
+        # 頂部操作列：搜尋與重新整理
         col_search, col_refresh = st.columns([4, 1])
         with col_search:
-          search_keyword = st.text_input("🔍 搜尋姓名或電話", placeholder="輸入關鍵字...")
+            search_keyword = st.text_input("🔍 搜尋關鍵字", placeholder="輸入姓名、電話或信箱...")
         with col_refresh:
-          st.write("")
-          if st.button("🔄"):
-            st.cache_data.clear()
-            st.rerun()
+            st.write("")
+            if st.button("🔄"):
+                st.cache_data.clear()
+                st.rerun()
 
+        # 新增：排序功能區塊 (使用兩欄設計，適合手機版)
+        col_sort_col, col_sort_order = st.columns(2)
+        with col_sort_col:
+            # 取得資料表的所有欄位作為排序選項，並預設選擇 'id' 或 'name'
+            sort_options = list(df.columns)
+            default_index = sort_options.index("id") if "id" in sort_options else 0
+            sort_by = st.selectbox("↕️ 排序欄位", options=sort_options, index=default_index)
+            
+        with col_sort_order:
+            # 選擇升序或降序
+            sort_order = st.selectbox("順序", options=["升序 (小到大)", "降序 (大到小)"])
+
+        # 複製一份資料準備處理
         filtered_df = df.copy()
+
+        # 1. 先執行關鍵字篩選
         if search_keyword:
-          mask = filtered_df.astype(str).apply(lambda x: x.str.contains(search_keyword, case=False, na=False)).any(axis=1)
-          filtered_df = filtered_df[mask]
+            mask = filtered_df.astype(str).apply(lambda x: x.str.contains(search_keyword, case=False, na=False)).any(axis=1)
+            filtered_df = filtered_df[mask]
+
+        # 2. 執行排序邏輯
+        is_ascending = True if sort_order == "升序 (小到大)" else False
+        # pandas 的 sort_values 處理包含空值的欄位時，預設會將空值放在最後
+        filtered_df = filtered_df.sort_values(by=sort_by, ascending=is_ascending, na_position='last')
 
         st.markdown(f"<p style='color: gray; font-size: 14px;'>共找到 {len(filtered_df)} 位用戶（點擊名字查看詳細內容）</p>", unsafe_allow_html=True)
 
+        # 渲染卡片式清單
         for index, row in filtered_df.iterrows():
-          uid = row["id"]
-          name = row.get("name", "未命名")
-          sub_info = row.get("phone", row.get("email", ""))
+            uid = row["id"]
+            name = row.get("name", "未命名")
+            # 動態抓取使用者作為排序依據的欄位，顯示在名字下方（如果不是預設的 id 或 name 的話）
+            if sort_by not in ["id", "name"] and not pd.isna(row.get(sort_by)):
+                sub_info = f"{sort_by}: {row.get(sort_by)}"
+            else:
+                # 預設顯示電話或信箱
+                sub_info = row.get("phone", row.get("email", ""))
           
-          with st.container():
-            col1, col2 = st.columns([3, 1])
-            with col1:
-              st.markdown(f"**👤 {name}**")
-              if sub_info:
-                st.markdown(f"<span style='color: gray; font-size: 12px;'>{sub_info}</span>", unsafe_allow_html=True)
-            with col2:
-              # 點擊後進入「簡介頁 (view)」
-              if st.button("查看", key=f"btn_{uid}"):
-                st.session_state["selected_user_id"] = uid
-                st.session_state["page_mode"] = "view"
-                st.rerun()
-                
-            st.markdown("---")
+            with st.container():
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown(f"**👤 {name}**")
+                    if sub_info:
+                        st.markdown(f"<span style='color: gray; font-size: 12px;'>{sub_info}</span>", unsafe_allow_html=True)
+                with col2:
+                    if st.button("查看", key=f"btn_{uid}"):
+                        st.session_state["selected_user_id"] = uid
+                        st.session_state["page_mode"] = "view"
+                        st.rerun()
+                st.markdown("---")
